@@ -30,6 +30,7 @@ type config struct {
 	Format          string
 	Delim           string
 	ExtendedColumns bool
+	Path			bool
 }
 
 func (s *street) Print(conf *config) {
@@ -93,6 +94,7 @@ func StreetMerge(c *cli.Context) error {
 		Format:          "polyline",
 		Delim:           "\x00",
 		ExtendedColumns: c.Bool("extended"),
+		Path: c.Bool("path"),
 	}
 	switch strings.ToLower(c.String("format")) {
 	case "geojson":
@@ -113,7 +115,7 @@ func StreetMerge(c *cli.Context) error {
 	defer conn.Close()
 
 	// parse
-	parsePBF(c, conn)
+	parsePBF(c, conn, conf.Path)
 	var streets = generateStreetsFromWays(conn)
 	var joined = joinStreets(streets)
 
@@ -362,7 +364,7 @@ func generateStreetsFromWays(conn *sqlite.Connection) []*street {
 	return streets
 }
 
-func parsePBF(c *cli.Context, conn *sqlite.Connection) {
+func parsePBF(c *cli.Context, conn *sqlite.Connection, path bool) {
 
 	// validate args
 	var argv = c.Args()
@@ -379,7 +381,7 @@ func parsePBF(c *cli.Context, conn *sqlite.Connection) {
 
 	// streets handler
 	streets := &handler.Streets{
-		TagWhitelist: tags.Highway(),
+		TagWhitelist: tags.Highway(path),
 		NodeMask:     lib.NewBitMask(),
 		DBHandler:    DBHandler,
 	}
