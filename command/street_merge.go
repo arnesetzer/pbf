@@ -30,7 +30,7 @@ type config struct {
 	Format          string
 	Delim           string
 	ExtendedColumns bool
-	Path			bool
+	Path            bool
 }
 
 func (s *street) Print(conf *config) {
@@ -94,7 +94,7 @@ func StreetMerge(c *cli.Context) error {
 		Format:          "polyline",
 		Delim:           "\x00",
 		ExtendedColumns: c.Bool("extended"),
-		Path: c.Bool("path"),
+		Path:            c.Bool("path"),
 	}
 	switch strings.ToLower(c.String("format")) {
 	case "geojson":
@@ -131,23 +131,6 @@ func StreetMerge(c *cli.Context) error {
 }
 
 func joinStreets(streets []*street) []*street {
-
-	var nameMap = make(map[string][]*street)
-	var ret []*street
-	var merged = make(map[*street]bool)
-
-	for _, st := range streets {
-		var normName = strings.ToLower(st.Name)
-		if _, ok := nameMap[normName]; !ok {
-			nameMap[normName] = []*street{st}
-		} else {
-			nameMap[normName] = append(nameMap[normName], st)
-		}
-	}
-
-	// points do not have to be exact matches
-	var distanceTolerance = 0.0005 // roughly 55 meters
-
 	var reversePath = func(path *geo.Path) {
 		for i := path.PointSet.Length()/2 - 1; i >= 0; i-- {
 			opp := path.PointSet.Length() - 1 - i
@@ -155,127 +138,90 @@ func joinStreets(streets []*street) []*street {
 		}
 	}
 
-	for _, strs := range nameMap {
-		for i := 0; i < len(strs); i++ {
-			var str1 = strs[i]
+	// points do not have to be exact matches
+	//var distanceTolerance = 3.65 * 6 // width of 6 lanes (in meters)
 
-			// fmt.Println("debug", i)
-			for j := 0; j < len(strs); j++ {
-				var str2 = strs[j]
-
-				if j <= i {
-					continue
-				}
-				if _, ok := merged[str2]; ok {
-					continue
-				}
-
-				if str1.Path.Last().DistanceFrom(str2.Path.First()) < distanceTolerance {
-
-					var match = str1.Path.Last()
-
-					// merge str2 in to str1
-					for _, point := range str2.Path.PointSet {
-						if point.Equals(match) {
-							continue
-						}
-						str1.Path.Push(&point)
-					}
-
-					merged[str2] = true
-					i--
-					break
-
-				} else if str1.Path.First().DistanceFrom(str2.Path.Last()) < distanceTolerance {
-
-					var match = str1.Path.First()
-
-					// flip str1 & str2 points
-					reversePath(str1.Path)
-					reversePath(str2.Path)
-
-					// merge str2 in to str1
-					for _, point := range str2.Path.PointSet {
-						if point.Equals(match) {
-							continue
-						}
-						str1.Path.Push(&point)
-					}
-
-					// flip str1 points back
-					reversePath(str1.Path)
-					reversePath(str2.Path)
-
-					merged[str2] = true
-					i--
-					break
-
-				} else if str1.Path.Last().DistanceFrom(str2.Path.Last()) < distanceTolerance {
-
-					var match = str1.Path.Last()
-
-					// flip str2 points
-					reversePath(str2.Path)
-
-					// merge str2 in to str1
-					for _, point := range str2.Path.PointSet {
-						if point.Equals(match) {
-							continue
-						}
-						str1.Path.Push(&point)
-					}
-
-					// flip str2 points back
-					reversePath(str2.Path)
-
-					merged[str2] = true
-					i--
-					break
-
-				} else if str1.Path.First().DistanceFrom(str2.Path.First()) < distanceTolerance {
-
-					var match = str1.Path.First()
-
-					// flip str1 points
-					reversePath(str1.Path)
-
-					// merge str2 in to str1
-					for _, point := range str2.Path.PointSet {
-						if point.Equals(match) {
-							continue
-						}
-						str1.Path.Push(&point)
-					}
-
-					// flip str1 points back
-					reversePath(str1.Path)
-
-					merged[str2] = true
-					i--
-					break
-
-				}
+	for i := 0; i < len(streets); i++ {
+		for j := 0; j < len(streets); j++ {
+			//continue if street is the same
+			if i == j {
+				continue
 			}
+			var intersects = streets[i].Path.Intersects(streets[j].Path)
+
+			//Check if same name and streets intersect with each other
+			if streets[i].Name == streets[j].Name && intersects {
+				distanceList := make(map[string]float64)
+				//ff = firstFirst, fl = firstLast, etc.
+				distanceList["ff"] = streets[i].Path.First().DistanceFrom(streets[j].Path.First())
+				distanceList["fl"] = streets[i].Path.First().DistanceFrom(streets[j].Path.Last())
+				distanceList["lf"] = streets[i].Path.Last().DistanceFrom(streets[j].Path.First())
+				distanceList["ll"] = streets[i].Path.Last().DistanceFrom(streets[j].Path.Last())
+
+				//Sort by Value asc
+				keys := make([]string, 0, len(distanceList))
+				for k := range distanceList {
+					keys = append(keys, k)
+				}
+
+				sort.SliceStable(keys, func(i, j int) bool {
+					return distanceList[keys[i]] < distanceList[keys[j]]
+				})
+				//Sorting done
+
+				//Get first and smallest distance
+				var smallestDistance float64
+				var DistanceType string
+				for k, v := range distanceList {
+					smallestDistance = v
+					DistanceType = k
+					break
+				}
+
+				if smallestDistance > 0.0 {
+					log.Println("Street already merged, result may be a little bit weired on street", streets[i].Name)
+				}
+				switch DistanceType {
+				case "ff":
+
+					reversePath(streets[i].Path)
+
+					for k := 0; k < len(streets[j].Path.Points()); k++ {
+						streets[i].Path.Push((*geo.Point)(&streets[j].Path.Points()[k]))
+					}
+					reversePath(streets[i].Path)
+
+				case "fl":
+
+					reversePath(streets[i].Path)
+					reversePath(streets[j].Path)
+
+					for k := 0; k < len(streets[j].Path.Points()); k++ {
+						streets[i].Path.Push((*geo.Point)(&streets[j].Path.Points()[k]))
+					}
+					reversePath(streets[i].Path)
+				case "lf":
+
+					for k := 0; k < len(streets[j].Path.Points()); k++ {
+						streets[i].Path.Push((*geo.Point)(&streets[j].Path.Points()[k]))
+					}
+				case "ll":
+
+					reversePath(streets[j].Path)
+
+					for k := 0; k < len(streets[j].Path.Points()); k++ {
+						streets[i].Path.Push((*geo.Point)(&streets[j].Path.Points()[k]))
+					}
+				}
+				//Removed merged street
+				streets = append(streets[:j], streets[j+1:]...)
+
+			}
+
 		}
 	}
 
-	// output lines in consistent order
-	keys := make([]string, len(nameMap))
-	for k := range nameMap {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, k := range keys {
-		var strs = nameMap[k]
-		for _, str := range strs {
-			if _, ok := merged[str]; !ok {
-				ret = append(ret, str)
-			}
-		}
-	}
-
-	return ret
+	return streets
 }
 
 func loadStreetsFromDatabase(conn *sqlite.Connection, callback func(*sql.Rows)) {
